@@ -57,6 +57,7 @@ import java.text.SimpleDateFormat
 import java.util.*
 
 data class Album(val id: String?, val name: String)
+data class WeatherData(val temperature: String, val iconUrl: String)
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -135,7 +136,7 @@ fun PhotoFrameContent() {
     var showWeather by rememberSaveable { mutableStateOf(false) }
     var isWeatherLoading by remember { mutableStateOf(false) }
     var shuffleImages by rememberSaveable { mutableStateOf(false) }
-    var temperature by remember { mutableStateOf<String?>(null) }
+    var weatherData by remember { mutableStateOf<WeatherData?>(null) }
 
     val locationLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
@@ -181,15 +182,15 @@ fun PhotoFrameContent() {
     // Weather Update Timer
     LaunchedEffect(showWeather) {
         if (showWeather) {
-            isWeatherLoading = temperature == null
+            isWeatherLoading = weatherData == null
             while (showWeather) {
-                val temp = fetchWeather(context)
+                val data = fetchWeather(context)
                 isWeatherLoading = false
-                if (temp != null) temperature = temp
+                if (data != null) weatherData = data
                 delay(1800000) // 30 minutes
             }
         } else {
-            temperature = null
+            weatherData = null
             isWeatherLoading = false
         }
     }
@@ -234,12 +235,12 @@ fun PhotoFrameContent() {
         }
 
         // Overlay: Clock & Weather
-        if (showClock || temperature != null || isWeatherLoading) {
+        if (showClock || weatherData != null || isWeatherLoading) {
             ClockAndWeatherOverlay(
                 modifier = Modifier.align(Alignment.BottomEnd),
                 fontSize = clockSize,
                 fontStyle = clockFontStyle,
-                temperature = temperature,
+                weatherData = weatherData,
                 showClock = showClock,
                 isLoading = isWeatherLoading
             )
@@ -453,7 +454,7 @@ fun ClockAndWeatherOverlay(
     modifier: Modifier = Modifier,
     fontSize: Float,
     fontStyle: String,
-    temperature: String?,
+    weatherData: WeatherData?,
     showClock: Boolean,
     isLoading: Boolean
 ) {
@@ -495,14 +496,21 @@ fun ClockAndWeatherOverlay(
                 color = Color.White,
                 strokeWidth = 2.dp
             )
-        } else if (temperature != null) {
-            Text(
-                text = "$temperature°C",
-                color = Color.White,
-                fontSize = (fontSize * 0.6).sp,
-                fontFamily = fontFamily,
-                style = MaterialTheme.typography.headlineSmall.copy(shadow = textShadow)
-            )
+        } else if (weatherData != null) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                AsyncImage(
+                    model = weatherData.iconUrl,
+                    contentDescription = null,
+                    modifier = Modifier.size((fontSize * 0.8).dp)
+                )
+                Text(
+                    text = "${weatherData.temperature}°C",
+                    color = Color.White,
+                    fontSize = (fontSize * 0.6).sp,
+                    fontFamily = fontFamily,
+                    style = MaterialTheme.typography.headlineSmall.copy(shadow = textShadow)
+                )
+            }
         }
         if (showClock) {
             Text(
@@ -524,7 +532,7 @@ fun ClockAndWeatherOverlay(
 }
 
 @SuppressLint("MissingPermission")
-suspend fun fetchWeather(context: Context): String? {
+suspend fun fetchWeather(context: Context): WeatherData? {
     return withContext(Dispatchers.IO) {
         try {
             Log.d("Weather", "Starting weather fetch...")
@@ -550,8 +558,13 @@ suspend fun fetchWeather(context: Context): String? {
                 val json = JSONObject(response)
                 val main = json.getJSONObject("main")
                 val temp = main.getInt("temp").toString()
-                Log.d("Weather", "Temperature fetched: $temp")
-                temp
+                
+                val weatherArray = json.getJSONArray("weather")
+                val iconCode = weatherArray.getJSONObject(0).getString("icon")
+                val iconUrl = "https://openweathermap.org/img/wn/$iconCode@2x.png"
+                
+                Log.d("Weather", "Temperature fetched: $temp, Icon: $iconCode")
+                WeatherData(temp, iconUrl)
             } else {
                 Log.w("Weather", "Could not determine location (Timeout or GPS disabled)")
                 null
