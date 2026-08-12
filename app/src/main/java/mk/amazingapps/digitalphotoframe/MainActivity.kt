@@ -15,11 +15,9 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.Crossfade
+import androidx.compose.animation.*
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
@@ -41,6 +39,10 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import android.util.Log
 import coil.compose.AsyncImage
 import com.google.android.gms.location.LocationServices
@@ -61,10 +63,16 @@ data class WeatherData(val temperature: String, val iconUrl: String)
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
+        installSplashScreen()
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         
+        // Hide system bars (status bar, navigation bar)
+        val windowInsetsController = WindowCompat.getInsetsController(window, window.decorView)
+        windowInsetsController.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        windowInsetsController.hide(WindowInsetsCompat.Type.systemBars())
+
         setContent {
             DigitalPhotoFrameTheme {
                 MainScreen()
@@ -136,6 +144,7 @@ fun PhotoFrameContent() {
     var showWeather by rememberSaveable { mutableStateOf(false) }
     var isWeatherLoading by remember { mutableStateOf(false) }
     var shuffleImages by rememberSaveable { mutableStateOf(false) }
+    var transitionType by rememberSaveable { mutableStateOf("Fade") }
     var weatherData by remember { mutableStateOf<WeatherData?>(null) }
 
     val locationLauncher = rememberLauncherForActivityResult(
@@ -206,6 +215,7 @@ fun PhotoFrameContent() {
     Box(
         modifier = Modifier
             .fillMaxSize()
+            .background(Color.Black)
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null
@@ -214,9 +224,26 @@ fun PhotoFrameContent() {
             }
     ) {
         if (images.isNotEmpty()) {
-            Crossfade(
+            AnimatedContent(
                 targetState = currentImageIndex,
-                animationSpec = tween(durationMillis = 1500),
+                transitionSpec = {
+                    when (transitionType) {
+                        "Slide" -> {
+                            slideInHorizontally(animationSpec = tween(1000)) { it } + fadeIn(animationSpec = tween(1000)) togetherWith
+                                    slideOutHorizontally(animationSpec = tween(1000)) { -it } + fadeOut(animationSpec = tween(1000))
+                        }
+                        "Zoom" -> {
+                            scaleIn(initialScale = 0.8f, animationSpec = tween(1000)) + fadeIn(animationSpec = tween(1000)) togetherWith
+                                    scaleOut(targetScale = 1.2f, animationSpec = tween(1000)) + fadeOut(animationSpec = tween(1000))
+                        }
+                        "None" -> {
+                            EnterTransition.None togetherWith ExitTransition.None
+                        }
+                        else -> { // Fade
+                            fadeIn(animationSpec = tween(1500)) togetherWith fadeOut(animationSpec = tween(1500))
+                        }
+                    }
+                },
                 label = "ImageTransition"
             ) { index ->
                 if (index < images.size) {
@@ -300,6 +327,11 @@ fun PhotoFrameContent() {
                     shuffleImages = it
                     currentImageIndex = 0
                     menuInteractionTrigger++
+                },
+                transitionType = transitionType,
+                onTransitionTypeSelected = {
+                    transitionType = it
+                    menuInteractionTrigger++
                 }
             )
         }
@@ -322,7 +354,9 @@ fun SettingsMenu(
     showWeather: Boolean,
     onShowWeatherChanged: (Boolean) -> Unit,
     shuffleImages: Boolean,
-    onShuffleChanged: (Boolean) -> Unit
+    onShuffleChanged: (Boolean) -> Unit,
+    transitionType: String,
+    onTransitionTypeSelected: (String) -> Unit
 ) {
     Surface(
         modifier = Modifier
@@ -444,6 +478,20 @@ fun SettingsMenu(
                 Text("Shuffle images:", style = MaterialTheme.typography.titleMedium)
                 Spacer(modifier = Modifier.width(16.dp))
                 Switch(checked = shuffleImages, onCheckedChange = onShuffleChanged)
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            Text("Transition effect:", style = MaterialTheme.typography.titleMedium)
+            Row(modifier = Modifier.padding(top = 8.dp)) {
+                listOf("Fade", "Slide", "Zoom", "None").forEach { type ->
+                    FilterChip(
+                        selected = transitionType == type,
+                        onClick = { onTransitionTypeSelected(type) },
+                        label = { Text(type) },
+                        modifier = Modifier.padding(horizontal = 4.dp)
+                    )
+                }
             }
         }
     }

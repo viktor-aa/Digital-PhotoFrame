@@ -1,5 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <style name="Theme.DigitalPhotoFrame" parent="android:Theme.Material.NoActionBar" />
 
-    <style name="Theme.DigitalPhotoFrame" parent="android:Theme.Material.Light.NoActionBar" />
+    <style name="Theme.App.Starting" parent="Theme.SplashScreen">
+        <!-- Background of the splash screen -->
+        <item name="windowSplashScreenBackground">#000000</item>
+        <!-- Icon of the splash screen -->
+        <item name="windowSplashScreenAnimatedIcon">@mipmap/ic_launcher</item>
+        <!-- The theme to use after the splash screen is done -->
+        <item name="postSplashScreenTheme">@style/Theme.DigitalPhotoFrame</item>
+    </style>
 </resources>
