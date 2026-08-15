@@ -278,7 +278,9 @@ fun PhotoFrameContent() {
             visible = showMenu,
             enter = fadeIn(),
             exit = fadeOut(),
-            modifier = Modifier.align(Alignment.TopCenter)
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .windowInsetsPadding(WindowInsets.safeDrawing)
         ) {
             SettingsMenu(
                 currentInterval = slideShowIntervalSeconds,
@@ -360,7 +362,6 @@ fun SettingsMenu(
 ) {
     Surface(
         modifier = Modifier
-            .padding(top = 64.dp)
             .padding(16.dp)
             .fillMaxWidth(0.9f)
             .fillMaxHeight(0.7f),
@@ -532,6 +533,7 @@ fun ClockAndWeatherOverlay(
 
     Column(
         modifier = modifier
+            .windowInsetsPadding(WindowInsets.safeDrawing)
             .padding(bottom = 32.dp, end = 32.dp)
             .padding(8.dp),
         horizontalAlignment = Alignment.End
