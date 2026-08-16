@@ -751,16 +751,11 @@ suspend fun getImageMetadata(context: Context, uri: Uri): ImageMetadata? {
                     }
                 }
 
-                // Mock data for testing purposes if real data is missing
-                val finalDate = formattedDate ?: "June 15, 2024"
-                val finalLocation = locationName ?: "Paris, France"
-
-                ImageMetadata(finalDate, finalLocation)
+                ImageMetadata(formattedDate, locationName)
             }
         } catch (e: Exception) {
             Log.e("Metadata", "Error reading EXIF: ${e.message}")
-            // Return mock data on error too for visual testing
-            ImageMetadata("June 15, 2024", "Paris, France")
+            null
         }
     }
 }
