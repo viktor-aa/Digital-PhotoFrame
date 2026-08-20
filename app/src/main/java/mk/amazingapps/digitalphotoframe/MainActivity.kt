@@ -9,6 +9,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.MediaStore
+import android.util.Log
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -17,6 +18,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -24,6 +26,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -35,18 +38,17 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import androidx.core.net.toUri
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
-import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.ui.text.font.FontWeight
-import android.util.Log
 import androidx.exifinterface.media.ExifInterface
 import coil.compose.AsyncImage
 import com.google.android.gms.location.LocationServices
@@ -66,6 +68,10 @@ data class Album(val id: String?, val name: String)
 data class WeatherData(val temperature: String, val iconUrl: String)
 data class ImageMetadata(val dateTaken: String?, val location: String?)
 
+enum class ImageSource {
+    LOCAL, REMOTE
+}
+
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         installSplashScreen()
@@ -73,7 +79,6 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         
-        // Hide system bars (status bar, navigation bar)
         val windowInsetsController = WindowCompat.getInsetsController(window, window.decorView)
         windowInsetsController.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
         windowInsetsController.hide(WindowInsetsCompat.Type.systemBars())
@@ -108,7 +113,10 @@ fun MainScreen() {
     if (hasPhotoPermission) {
         PhotoFrameContent()
     } else {
-        PermissionScreen("Permission required to access photos", "Grant Permission") {
+        PermissionScreen(
+            stringResource(R.string.permission_photos_required),
+            stringResource(R.string.grant_permission)
+        ) {
             val permission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 Manifest.permission.READ_MEDIA_IMAGES
             } else {
@@ -139,10 +147,11 @@ fun PhotoFrameContent() {
     var currentImageIndex by rememberSaveable { mutableIntStateOf(0) }
     var slideShowIntervalSeconds by rememberSaveable { mutableLongStateOf(60L) }
     var selectedAlbumId by rememberSaveable { mutableStateOf<String?>(null) }
+    var imageSource by rememberSaveable { mutableStateOf(ImageSource.LOCAL) }
+    var remoteListUrl by rememberSaveable { mutableStateOf("") }
     var showMenu by rememberSaveable { mutableStateOf(false) }
     var menuInteractionTrigger by remember { mutableLongStateOf(0L) }
     
-    // Clock & Weather Settings
     var clockSize by rememberSaveable { mutableFloatStateOf(48f) }
     var clockFontStyle by rememberSaveable { mutableStateOf("Sans") }
     var showClock by rememberSaveable { mutableStateOf(true) }
@@ -163,26 +172,42 @@ fun PhotoFrameContent() {
         }
     }
 
-    // Load albums
     LaunchedEffect(Unit) {
-        albums = loadAlbums(context)
+        if (imageSource == ImageSource.LOCAL) {
+            albums = loadAlbums(context)
+        }
     }
 
-    // Load images when album changes
-    LaunchedEffect(selectedAlbumId) {
-        images.clear()
-        val loadedImages = loadImages(context, selectedAlbumId)
-        images.addAll(if (shuffleImages) loadedImages.shuffled() else loadedImages)
+    LaunchedEffect(selectedAlbumId, imageSource, remoteListUrl) {
+        if (imageSource == ImageSource.LOCAL) {
+            images.clear()
+            val loadedImages = loadImages(context, selectedAlbumId)
+            images.addAll(if (shuffleImages) loadedImages.shuffled() else loadedImages)
+        } else if (remoteListUrl.isNotBlank()) {
+            images.clear()
+            val remoteImages = fetchRemoteImages(remoteListUrl)
+            
+            val prefs = context.getSharedPreferences("photo_frame_prefs", Context.MODE_PRIVATE)
+            if (remoteImages.isNotEmpty()) {
+                prefs.edit().putString("cached_remote_list", remoteImages.joinToString(",")).apply()
+                images.addAll(if (shuffleImages) remoteImages.shuffled() else remoteImages)
+            } else {
+                val cachedData = prefs.getString("cached_remote_list", null)
+                if (!cachedData.isNullOrBlank()) {
+                    val cachedUris = cachedData.split(",").map { it.toUri() }
+                    images.addAll(if (shuffleImages) cachedUris.shuffled() else cachedUris)
+                }
+            }
+            currentImageIndex = 0
+        }
     }
 
-    // Update metadata when image changes
     LaunchedEffect(currentImageIndex, images.size) {
         if (images.isNotEmpty() && currentImageIndex < images.size) {
             currentImageMetadata = getImageMetadata(context, images[currentImageIndex])
         }
     }
 
-    // Re-shuffle if shuffle setting changes
     LaunchedEffect(shuffleImages) {
         if (images.isNotEmpty()) {
             val currentList = images.toList()
@@ -191,7 +216,6 @@ fun PhotoFrameContent() {
         }
     }
 
-    // Slideshow Timer
     LaunchedEffect(images.size, slideShowIntervalSeconds) {
         if (images.isNotEmpty()) {
             while (true) {
@@ -203,7 +227,6 @@ fun PhotoFrameContent() {
         }
     }
 
-    // Weather Update Timer
     LaunchedEffect(showWeather) {
         if (showWeather) {
             isWeatherLoading = weatherData == null
@@ -211,7 +234,7 @@ fun PhotoFrameContent() {
                 val data = fetchWeather(context)
                 isWeatherLoading = false
                 if (data != null) weatherData = data
-                delay(1800000) // 30 minutes
+                delay(1800000) 
             }
         } else {
             weatherData = null
@@ -219,7 +242,6 @@ fun PhotoFrameContent() {
         }
     }
 
-    // Hide menu after 7 seconds
     LaunchedEffect(showMenu, menuInteractionTrigger) {
         if (showMenu) {
             delay(7000)
@@ -254,7 +276,7 @@ fun PhotoFrameContent() {
                         "None" -> {
                             EnterTransition.None togetherWith ExitTransition.None
                         }
-                        else -> { // Fade
+                        else -> {
                             fadeIn(animationSpec = tween(1500)) togetherWith fadeOut(animationSpec = tween(1500))
                         }
                     }
@@ -272,11 +294,10 @@ fun PhotoFrameContent() {
             }
         } else {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text("No images found")
+                Text(stringResource(R.string.no_images_found), color = Color.Gray)
             }
         }
 
-        // Overlay: Clock & Weather
         if (showClock || weatherData != null || isWeatherLoading || ((showPhotoLocation || showPhotoDate) && currentImageMetadata != null)) {
             ClockAndWeatherOverlay(
                 modifier = Modifier.align(Alignment.BottomEnd),
@@ -291,7 +312,6 @@ fun PhotoFrameContent() {
             )
         }
 
-        // Settings Menu Overlay
         AnimatedVisibility(
             visible = showMenu,
             enter = fadeIn(),
@@ -358,6 +378,17 @@ fun PhotoFrameContent() {
                     showPhotoDate = it
                     menuInteractionTrigger++
                 },
+                imageSource = imageSource,
+                onImageSourceChanged = {
+                    imageSource = it
+                    currentImageIndex = 0
+                    menuInteractionTrigger++
+                },
+                remoteListUrl = remoteListUrl,
+                onRemoteListUrlChanged = {
+                    remoteListUrl = it
+                    menuInteractionTrigger++
+                },
                 transitionType = transitionType,
                 onTransitionTypeSelected = {
                     transitionType = it
@@ -389,6 +420,10 @@ fun SettingsMenu(
     onShowLocationChanged: (Boolean) -> Unit,
     showDate: Boolean,
     onShowDateChanged: (Boolean) -> Unit,
+    imageSource: ImageSource,
+    onImageSourceChanged: (ImageSource) -> Unit,
+    remoteListUrl: String,
+    onRemoteListUrlChanged: (String) -> Unit,
     transitionType: String,
     onTransitionTypeSelected: (String) -> Unit
 ) {
@@ -396,7 +431,7 @@ fun SettingsMenu(
         modifier = Modifier
             .padding(16.dp)
             .fillMaxWidth(0.95f)
-            .fillMaxHeight(0.8f),
+            .fillMaxHeight(0.85f),
         shape = RoundedCornerShape(28.dp),
         color = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f),
         tonalElevation = 12.dp,
@@ -408,16 +443,76 @@ fun SettingsMenu(
                 .verticalScroll(rememberScrollState())
         ) {
             Text(
-                text = "Settings",
+                text = stringResource(R.string.settings_title),
                 style = MaterialTheme.typography.headlineMedium,
                 fontWeight = FontWeight.Bold,
                 modifier = Modifier.padding(bottom = 24.dp)
             )
 
-            // Section: Slideshow
-            SettingsSectionTitle("Slideshow Settings")
+            SettingsSectionTitle(stringResource(R.string.image_source_section))
+            Row(modifier = Modifier.padding(vertical = 12.dp)) {
+                ImageSource.entries.forEach { source ->
+                    FilterChip(
+                        selected = imageSource == source,
+                        onClick = { onImageSourceChanged(source) },
+                        label = { 
+                            Text(if (source == ImageSource.LOCAL) stringResource(R.string.local_gallery) else stringResource(R.string.remote_list_url)) 
+                        },
+                        modifier = Modifier.padding(horizontal = 4.dp)
+                    )
+                }
+            }
+
+            if (imageSource == ImageSource.REMOTE) {
+                OutlinedTextField(
+                    value = remoteListUrl,
+                    onValueChange = onRemoteListUrlChanged,
+                    label = { Text(stringResource(R.string.remote_list_label)) },
+                    placeholder = { Text(stringResource(R.string.remote_list_placeholder)) },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 8.dp),
+                    singleLine = true,
+                    shape = RoundedCornerShape(12.dp)
+                )
+                Text(
+                    text = stringResource(R.string.remote_list_hint),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(start = 4.dp, bottom = 16.dp)
+                )
+            } else {
+                SettingsSectionTitle(stringResource(R.string.albums_section))
+                LazyRow(
+                    modifier = Modifier
+                        .padding(vertical = 12.dp)
+                        .fillMaxWidth(),
+                    contentPadding = PaddingValues(horizontal = 4.dp)
+                ) {
+                    item {
+                        FilterChip(
+                            selected = selectedAlbumId == null,
+                            onClick = { onAlbumSelected(null) },
+                            label = { Text(stringResource(R.string.all_images)) },
+                            modifier = Modifier.padding(horizontal = 4.dp)
+                        )
+                    }
+                    items(albums) { album ->
+                        FilterChip(
+                            selected = selectedAlbumId == album.id,
+                            onClick = { onAlbumSelected(album.id) },
+                            label = { Text(album.name) },
+                            modifier = Modifier.padding(horizontal = 4.dp)
+                        )
+                    }
+                }
+            }
+
+            HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp), thickness = 0.5.dp)
+
+            SettingsSectionTitle(stringResource(R.string.slideshow_settings_section))
             
-            Text("Switching interval:", style = MaterialTheme.typography.bodyMedium)
+            Text(stringResource(R.string.switching_interval), style = MaterialTheme.typography.bodyMedium)
             Row(modifier = Modifier.padding(vertical = 12.dp)) {
                 listOf(10L, 30L, 60L, 300L).forEach { seconds ->
                     val label = when (seconds) {
@@ -436,16 +531,22 @@ fun SettingsMenu(
                 }
             }
 
-            SettingToggleItem("Shuffle images", shuffleImages, onShuffleChanged)
+            SettingToggleItem(stringResource(R.string.shuffle_images), shuffleImages, onShuffleChanged)
             
             Spacer(modifier = Modifier.height(8.dp))
-            Text("Transition effect:", style = MaterialTheme.typography.bodyMedium)
+            Text(stringResource(R.string.transition_effect), style = MaterialTheme.typography.bodyMedium)
             Row(modifier = Modifier.padding(vertical = 12.dp)) {
                 listOf("Fade", "Slide", "Zoom", "None").forEach { type ->
+                    val label = when(type) {
+                        "Fade" -> stringResource(R.string.transition_fade)
+                        "Slide" -> stringResource(R.string.transition_slide)
+                        "Zoom" -> stringResource(R.string.transition_zoom)
+                        else -> stringResource(R.string.transition_none)
+                    }
                     FilterChip(
                         selected = transitionType == type,
                         onClick = { onTransitionTypeSelected(type) },
-                        label = { Text(type) },
+                        label = { Text(label) },
                         modifier = Modifier.padding(horizontal = 4.dp)
                     )
                 }
@@ -453,61 +554,32 @@ fun SettingsMenu(
 
             HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp), thickness = 0.5.dp)
 
-            // Section: Albums
-            SettingsSectionTitle("Albums")
-            LazyRow(
-                modifier = Modifier
-                    .padding(vertical = 12.dp)
-                    .fillMaxWidth(),
-                contentPadding = PaddingValues(horizontal = 4.dp)
-            ) {
-                item {
-                    FilterChip(
-                        selected = selectedAlbumId == null,
-                        onClick = { onAlbumSelected(null) },
-                        label = { Text("All images") },
-                        modifier = Modifier.padding(horizontal = 4.dp)
-                    )
-                }
-                items(albums) { album ->
-                    FilterChip(
-                        selected = selectedAlbumId == album.id,
-                        onClick = { onAlbumSelected(album.id) },
-                        label = { Text(album.name) },
-                        modifier = Modifier.padding(horizontal = 4.dp)
-                    )
-                }
-            }
-
-            HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp), thickness = 0.5.dp)
-
-            // Section: Clock & Weather
-            SettingsSectionTitle("Clock & Weather")
+            SettingsSectionTitle(stringResource(R.string.clock_weather_section))
             
-            SettingToggleItem("Show clock", showClock, onShowClockChanged)
-            SettingToggleItem("Show weather", showWeather, onShowWeatherChanged)
+            SettingToggleItem(stringResource(R.string.show_clock), showClock, onShowClockChanged)
+            SettingToggleItem(stringResource(R.string.show_weather), showWeather, onShowWeatherChanged)
 
             if (showClock) {
                 Spacer(modifier = Modifier.height(8.dp))
-                Text("Clock size:", style = MaterialTheme.typography.bodyMedium)
+                Text(stringResource(R.string.clock_size), style = MaterialTheme.typography.bodyMedium)
                 Row(modifier = Modifier.padding(vertical = 12.dp)) {
-                    listOf(32f to "Small", 48f to "Medium", 72f to "Large").forEach { (size, label) ->
+                    listOf(32f to R.string.size_small, 48f to R.string.size_medium, 72f to R.string.size_large).forEach { (size, labelRes) ->
                         FilterChip(
                             selected = clockSize == size,
                             onClick = { onClockSizeSelected(size) },
-                            label = { Text(label) },
+                            label = { Text(stringResource(labelRes)) },
                             modifier = Modifier.padding(horizontal = 4.dp)
                         )
                     }
                 }
 
-                Text("Font style:", style = MaterialTheme.typography.bodyMedium)
+                Text(stringResource(R.string.font_style), style = MaterialTheme.typography.bodyMedium)
                 Row(modifier = Modifier.padding(vertical = 12.dp)) {
-                    listOf("Sans", "Serif", "Mono").forEach { style ->
+                    listOf("Sans" to R.string.style_sans, "Serif" to R.string.style_serif, "Mono" to R.string.style_mono).forEach { (style, labelRes) ->
                         FilterChip(
                             selected = clockStyle == style,
                             onClick = { onClockStyleSelected(style) },
-                            label = { Text(style) },
+                            label = { Text(stringResource(labelRes)) },
                             modifier = Modifier.padding(horizontal = 4.dp)
                         )
                     }
@@ -516,10 +588,9 @@ fun SettingsMenu(
 
             HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp), thickness = 0.5.dp)
 
-            // Section: Metadata
-            SettingsSectionTitle("Photo Information")
-            SettingToggleItem("Show location", showLocation, onShowLocationChanged)
-            SettingToggleItem("Show date", showDate, onShowDateChanged)
+            SettingsSectionTitle(stringResource(R.string.photo_info_section))
+            SettingToggleItem(stringResource(R.string.show_location), showLocation, onShowLocationChanged)
+            SettingToggleItem(stringResource(R.string.show_date), showDate, onShowDateChanged)
             
             Spacer(modifier = Modifier.height(24.dp))
         }
@@ -595,7 +666,6 @@ fun ClockAndWeatherOverlay(
             .padding(8.dp),
         horizontalAlignment = Alignment.End
     ) {
-        // Photo Info (Metadata)
         metadata?.let { info ->
             if ((showDate && info.dateTaken != null) || (showLocation && info.location != null)) {
                 Column(
@@ -675,22 +745,16 @@ fun ClockAndWeatherOverlay(
 suspend fun fetchWeather(context: Context): WeatherData? {
     return withContext(Dispatchers.IO) {
         try {
-            Log.d("Weather", "Starting weather fetch...")
             val fusedLocationClient = LocationServices.getFusedLocationProviderClient(context)
-            
-            // Try last known location first (much faster)
             var location = fusedLocationClient.lastLocation.await()
             
-            // If no last location, try to get a fresh one
             if (location == null) {
-                Log.d("Weather", "No last location, requesting fresh location...")
                 location = withTimeoutOrNull(10000) {
                     fusedLocationClient.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, null).await()
                 }
             }
             
             if (location != null) {
-                Log.d("Weather", "Location found: ${location.latitude}, ${location.longitude}")
                 val apiKey = "06ccb8eddef7cbb14f57377c31607ffe"
                 val urlString = "https://api.openweathermap.org/data/2.5/weather?lat=${location.latitude}&lon=${location.longitude}&units=metric&appid=$apiKey"
                 
@@ -703,18 +767,60 @@ suspend fun fetchWeather(context: Context): WeatherData? {
                 val iconCode = weatherArray.getJSONObject(0).getString("icon")
                 val iconUrl = "https://openweathermap.org/img/wn/$iconCode@2x.png"
                 
-                Log.d("Weather", "Temperature fetched: $temp, Icon: $iconCode")
                 WeatherData(temp, iconUrl)
             } else {
-                Log.w("Weather", "Could not determine location (Timeout or GPS disabled)")
                 null
             }
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e
-            Log.e("Weather", "Error fetching weather: ${e.message}")
             null
         }
     }
+}
+
+suspend fun fetchRemoteImages(url: String): List<Uri> {
+    return withContext(Dispatchers.IO) {
+        try {
+            val cleanUrl = url.trim()
+            val finalUrl = if (cleanUrl.contains("drive.google.com")) {
+                val fileId = extractGoogleDriveId(cleanUrl)
+                if (fileId != null) "https://drive.google.com/uc?export=download&id=$fileId" else cleanUrl
+            } else {
+                cleanUrl
+            }
+
+            val content = URL(finalUrl).readText()
+            urisFromContent(content)
+        } catch (e: Exception) {
+            emptyList()
+        }
+    }
+}
+
+private fun urisFromContent(content: String): List<Uri> {
+    return content.split(Regex("[,\\n\\r]+"))
+        .map { it.trim() }
+        .filter { it.isNotBlank() }
+        .map { link ->
+            if (link.contains("drive.google.com")) {
+                val fileId = extractGoogleDriveId(link)
+                if (fileId != null) {
+                    "https://drive.google.com/uc?export=download&id=$fileId".toUri()
+                } else {
+                    link.toUri()
+                }
+            } else {
+                link.toUri()
+            }
+        }
+}
+
+fun extractGoogleDriveId(url: String): String? {
+    val regex1 = "/file/d/([^/]+)".toRegex()
+    val regex2 = "id=([^&]+)".toRegex()
+    
+    return regex1.find(url)?.groupValues?.get(1) 
+        ?: regex2.find(url)?.groupValues?.get(1)
 }
 
 suspend fun getImageMetadata(context: Context, uri: Uri): ImageMetadata? {
@@ -737,7 +843,7 @@ suspend fun getImageMetadata(context: Context, uri: Uri): ImageMetadata? {
                             locationName = addr.locality ?: addr.adminArea ?: addr.countryName
                         }
                     } catch (e: Exception) {
-                        locationName = "${String.format("%.3f", latLong[0])}, ${String.format("%.3f", latLong[1])}"
+                        locationName = String.format(Locale.getDefault(), "%.3f, %.3f", latLong[0], latLong[1])
                     }
                 }
 
@@ -754,7 +860,6 @@ suspend fun getImageMetadata(context: Context, uri: Uri): ImageMetadata? {
                 ImageMetadata(formattedDate, locationName)
             }
         } catch (e: Exception) {
-            Log.e("Metadata", "Error reading EXIF: ${e.message}")
             null
         }
     }
@@ -813,7 +918,7 @@ fun loadImages(context: Context, bucketId: String? = null): List<Uri> {
             }
         }
     } catch (e: Exception) {
-        e.printStackTrace()
+        // Silently fail
     }
     return imageUris
 }

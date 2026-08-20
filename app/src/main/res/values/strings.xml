@@ -1,3 +1,37 @@
 <resources>
     <string name="app_name">Digital Photo Frame</string>
+    <string name="permission_photos_required">Permission required to access photos</string>
+    <string name="grant_permission">Grant Permission</string>
+    <string name="no_images_found">No images found</string>
+    <string name="settings_title">Settings</string>
+    <string name="image_source_section">Image Source</string>
+    <string name="local_gallery">Local Gallery</string>
+    <string name="remote_list_url">Remote List (URL)</string>
+    <string name="remote_list_label">Remote List URL (.txt)</string>
+    <string name="remote_list_placeholder">https://example.com/photos.txt</string>
+    <string name="remote_list_hint">Enter a URL to a text file containing image links (one per line).</string>
+    <string name="albums_section">Albums</string>
+    <string name="all_images">All images</string>
+    <string name="slideshow_settings_section">Slideshow Settings</string>
+    <string name="switching_interval">Switching interval:</string>
+    <string name="shuffle_images">Shuffle images</string>
+    <string name="transition_effect">Transition effect:</string>
+    <string name="transition_fade">Fade</string>
+    <string name="transition_slide">Slide</string>
+    <string name="transition_zoom">Zoom</string>
+    <string name="transition_none">None</string>
+    <string name="clock_weather_section">Clock &amp; Weather</string>
+    <string name="show_clock">Show clock</string>
+    <string name="show_weather">Show weather</string>
+    <string name="clock_size">Clock size:</string>
+    <string name="size_small">Small</string>
+    <string name="size_medium">Medium</string>
+    <string name="size_large">Large</string>
+    <string name="font_style">Font style:</string>
+    <string name="style_sans">Sans</string>
+    <string name="style_serif">Serif</string>
+    <string name="style_mono">Mono</string>
+    <string name="photo_info_section">Photo Information</string>
+    <string name="show_location">Show location</string>
+    <string name="show_date">Show date</string>
 </resources>
