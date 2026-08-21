@@ -51,21 +51,14 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.exifinterface.media.ExifInterface
 import coil.compose.AsyncImage
-import com.google.android.gms.location.LocationServices
-import com.google.android.gms.location.Priority
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeoutOrNull
 import mk.amazingapps.digitalphotoframe.ui.theme.DigitalPhotoFrameTheme
-import org.json.JSONObject
-import java.net.URL
 import java.text.SimpleDateFormat
 import java.util.*
 
 data class Album(val id: String?, val name: String)
-data class WeatherData(val temperature: String, val iconUrl: String)
 data class ImageMetadata(val dateTaken: String?, val location: String?)
 
 enum class ImageSource {
@@ -185,7 +178,7 @@ fun PhotoFrameContent() {
             images.addAll(if (shuffleImages) loadedImages.shuffled() else loadedImages)
         } else if (remoteListUrl.isNotBlank()) {
             images.clear()
-            val remoteImages = fetchRemoteImages(remoteListUrl)
+            val remoteImages = RemoteGalleryManager.fetchRemoteImages(remoteListUrl)
             
             val prefs = context.getSharedPreferences("photo_frame_prefs", Context.MODE_PRIVATE)
             if (remoteImages.isNotEmpty()) {
@@ -231,7 +224,7 @@ fun PhotoFrameContent() {
         if (showWeather) {
             isWeatherLoading = weatherData == null
             while (showWeather) {
-                val data = fetchWeather(context)
+                val data = WeatherManager.fetchWeather(context)
                 isWeatherLoading = false
                 if (data != null) weatherData = data
                 delay(1800000) 
@@ -741,88 +734,6 @@ fun ClockAndWeatherOverlay(
     }
 }
 
-@SuppressLint("MissingPermission")
-suspend fun fetchWeather(context: Context): WeatherData? {
-    return withContext(Dispatchers.IO) {
-        try {
-            val fusedLocationClient = LocationServices.getFusedLocationProviderClient(context)
-            var location = fusedLocationClient.lastLocation.await()
-            
-            if (location == null) {
-                location = withTimeoutOrNull(10000) {
-                    fusedLocationClient.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, null).await()
-                }
-            }
-            
-            if (location != null) {
-                val apiKey = "06ccb8eddef7cbb14f57377c31607ffe"
-                val urlString = "https://api.openweathermap.org/data/2.5/weather?lat=${location.latitude}&lon=${location.longitude}&units=metric&appid=$apiKey"
-                
-                val response = URL(urlString).readText()
-                val json = JSONObject(response)
-                val main = json.getJSONObject("main")
-                val temp = main.getInt("temp").toString()
-                
-                val weatherArray = json.getJSONArray("weather")
-                val iconCode = weatherArray.getJSONObject(0).getString("icon")
-                val iconUrl = "https://openweathermap.org/img/wn/$iconCode@2x.png"
-                
-                WeatherData(temp, iconUrl)
-            } else {
-                null
-            }
-        } catch (e: Exception) {
-            if (e is kotlinx.coroutines.CancellationException) throw e
-            null
-        }
-    }
-}
-
-suspend fun fetchRemoteImages(url: String): List<Uri> {
-    return withContext(Dispatchers.IO) {
-        try {
-            val cleanUrl = url.trim()
-            val finalUrl = if (cleanUrl.contains("drive.google.com")) {
-                val fileId = extractGoogleDriveId(cleanUrl)
-                if (fileId != null) "https://drive.google.com/uc?export=download&id=$fileId" else cleanUrl
-            } else {
-                cleanUrl
-            }
-
-            val content = URL(finalUrl).readText()
-            urisFromContent(content)
-        } catch (e: Exception) {
-            emptyList()
-        }
-    }
-}
-
-private fun urisFromContent(content: String): List<Uri> {
-    return content.split(Regex("[,\\n\\r]+"))
-        .map { it.trim() }
-        .filter { it.isNotBlank() }
-        .map { link ->
-            if (link.contains("drive.google.com")) {
-                val fileId = extractGoogleDriveId(link)
-                if (fileId != null) {
-                    "https://drive.google.com/uc?export=download&id=$fileId".toUri()
-                } else {
-                    link.toUri()
-                }
-            } else {
-                link.toUri()
-            }
-        }
-}
-
-fun extractGoogleDriveId(url: String): String? {
-    val regex1 = "/file/d/([^/]+)".toRegex()
-    val regex2 = "id=([^&]+)".toRegex()
-    
-    return regex1.find(url)?.groupValues?.get(1) 
-        ?: regex2.find(url)?.groupValues?.get(1)
-}
-
 suspend fun getImageMetadata(context: Context, uri: Uri): ImageMetadata? {
     return withContext(Dispatchers.IO) {
         try {
@@ -835,16 +746,7 @@ suspend fun getImageMetadata(context: Context, uri: Uri): ImageMetadata? {
                 
                 var locationName: String? = null
                 if (hasLocation) {
-                    try {
-                        val geocoder = android.location.Geocoder(context, Locale.getDefault())
-                        val addresses = geocoder.getFromLocation(latLong[0].toDouble(), latLong[1].toDouble(), 1)
-                        if (!addresses.isNullOrEmpty()) {
-                            val addr = addresses[0]
-                            locationName = addr.locality ?: addr.adminArea ?: addr.countryName
-                        }
-                    } catch (e: Exception) {
-                        locationName = String.format(Locale.getDefault(), "%.3f, %.3f", latLong[0], latLong[1])
-                    }
+                    locationName = LocationUtil.getLocationName(context, latLong[0].toDouble(), latLong[1].toDouble())
                 }
 
                 val formattedDate = dateTaken?.let {
